@@ -164,20 +164,45 @@ service cloud.firestore {
       // ── Sales ─────────────────────────────────────────────
       match /sales/{id} {
         allow read, list: if canRead(cid);
+
+        // P4: client must create with status 'pending' only.
+        // CF changes status to 'confirmed'. Client can NEVER
+        // create a confirmed sale directly.
         allow create:     if canWrite(cid) && hasBase(cid)
-                          && validAmt(request.resource.data.total)
-                          && request.resource.data.paymentType in ['cash','credit']
-                          && request.resource.data.isVoid == false
-                          && request.resource.data.status == 'active'
+                          && validAmt(request.resource.data.grandTotal)
+                          && request.resource.data.paymentType in ['cash','credit','partial']
+                          && request.resource.data.isVoid   == false
+                          && request.resource.data.status   == 'pending'
+                          && request.resource.data.stockProcessed   == false
+                          && request.resource.data.balanceProcessed == false
                           && exists(/databases/$(database)/documents/companies/$(cid)/customers/$(request.resource.data.customerId));
-        // Only void allowed — all other fields locked
+
+        // ── Sale update rules ─────────────────────────────────
+        // IMPORTANT: Cloud Functions use Admin SDK which BYPASSES
+        // these rules entirely. Rules only restrict normal clients.
+        //
+        // Fields owned by Cloud Function (Admin SDK bypasses rules):
+        //   status, invoiceNumber, stockProcessed, balanceProcessed,
+        //   voidProcessed, failureReason, receiptId, balanceUpdatedAt
+        //
+        // Normal clients can ONLY void a confirmed sale.
+        // All financial fields are immutable after creation.
         allow update:     if isAdminRole(cid)
+                          // Must be a void operation
                           && request.resource.data.isVoid     == true
                           && resource.data.isVoid              == false
+                          // Void reason required
+                          && request.resource.data.voidReason is string
+                          && request.resource.data.voidReason.size() > 0
+                          // Financial fields must not change
                           && immutableFields([
-                               'total','customerId','companyId',
-                               'createdBy','createdAt','paymentType','items'
+                               'grandTotal','subtotal','discountTotal',
+                               'amountDue','amountReceived',
+                               'customerId','companyId','createdBy','createdAt',
+                               'paymentType','items','invoiceNumber',
+                               'stockProcessed','balanceProcessed'
                              ]);
+
         allow delete:     if false;
       }
 
