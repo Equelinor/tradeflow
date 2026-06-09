@@ -168,14 +168,28 @@ service cloud.firestore {
         // P4: client must create with status 'pending' only.
         // CF changes status to 'confirmed'. Client can NEVER
         // create a confirmed sale directly.
+        // P1-2: keys().hasOnly() prevents extra field injection.
         allow create:     if canWrite(cid) && hasBase(cid)
                           && validAmt(request.resource.data.grandTotal)
                           && request.resource.data.paymentType in ['cash','credit','partial']
-                          && request.resource.data.isVoid   == false
-                          && request.resource.data.status   == 'pending'
-                          && request.resource.data.stockProcessed   == false
-                          && request.resource.data.balanceProcessed == false
-                          && exists(/databases/$(database)/documents/companies/$(cid)/customers/$(request.resource.data.customerId));
+                          && request.resource.data.isVoid            == false
+                          && request.resource.data.status            == 'pending'
+                          && request.resource.data.stockProcessed    == false
+                          && request.resource.data.balanceProcessed  == false
+                          && request.resource.data.voidProcessed     == false
+                          && request.resource.data.invoiceNumber      == null
+                          && exists(/databases/$(database)/documents/companies/$(cid)/customers/$(request.resource.data.customerId))
+                          && request.resource.data.keys().hasOnly([
+                               'companyId','customerId','date','items',
+                               'subtotal','discountTotal','grandTotal',
+                               'paymentType','amountReceived','amountDue',
+                               'paymentMethod','notes','creditOverride',
+                               'isVoid','voidReason','voidedAt','voidedBy',
+                               'invoiceNumber','receiptId',
+                               'stockProcessed','balanceProcessed','voidProcessed',
+                               'status','failureReason',
+                               'createdAt','updatedAt','createdBy'
+                             ]);
 
         // ── Sale update rules ─────────────────────────────────
         // IMPORTANT: Cloud Functions use Admin SDK which BYPASSES
