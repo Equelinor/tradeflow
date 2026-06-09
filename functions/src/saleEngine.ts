@@ -188,12 +188,50 @@ async function processSaleCreation(
       }
 
       // ── 5. Customer balance update ────────────────────────
-      // Rule: only amountDue affects balance
-      //   Cash sale:    amountDue = 0    → no balance change
-      //   Credit sale:  amountDue = full → full amount added
-      //   Partial:      amountDue = remainder → only unpaid added
+      // P2-5: Server-side credit limit enforcement.
+      // UI check is first gate (UX). CF check is the real gate.
+      // CF reads live customer data inside the transaction —
+      // cannot be spoofed by the client.
       if (sale.amountDue > 0) {
-        txn.update(db.doc(`${base}/customers/${sale.customerId}`), {
+        const customerRef  = db.doc(`${base}/customers/${sale.customerId}`);
+        const customerSnap = await txn.get(customerRef);
+
+        if (!customerSnap.exists) {
+          throw new Error(`Customer not found: ${sale.customerId}`);
+        }
+
+        const customerData   = customerSnap.data()!;
+        const currentBalance = customerData.currentBalance ?? 0;
+        const creditLimit    = customerData.creditLimit ?? null;
+        const newBalance     = currentBalance + sale.amountDue;
+
+        // Check credit limit server-side
+        if (creditLimit !== null && newBalance > creditLimit) {
+          // Only allow if UI sent a valid creditOverride with approval
+          const override = sale.creditOverride;
+          const hasValidOverride = override &&
+            override.overridden === true &&
+            typeof override.reason === 'string' &&
+            override.reason.trim().length > 0 &&
+            typeof override.by === 'string' &&
+            override.by.trim().length > 0;
+
+          if (!hasValidOverride) {
+            throw new Error(
+              `credit limit exceeded: balance would be ${newBalance}, ` +
+              `limit is ${creditLimit}. No valid override provided.`
+            );
+          }
+
+          // Log credit override to audit trail
+          console.log(
+            `[saleEngine] credit limit override approved: ` +
+            `${sale.customerId} — ${newBalance} > ${creditLimit} ` +
+            `— approved by ${override.by}: ${override.reason}`
+          );
+        }
+
+        txn.update(customerRef, {
           currentBalance:   FieldValue.increment(sale.amountDue),
           balanceUpdatedAt: FieldValue.serverTimestamp(),
         });
@@ -252,14 +290,32 @@ async function processSaleCreation(
     console.log(`[saleEngine] confirmed: ${companyId}/${saleId}`);
 
   } catch (err) {
-    // Mark failed so UI can surface the error to the trader
+    const errMsg = String(err);
+
+    // P1-3: Distinguish permanent vs transient failures.
+    // Permanent = bad data or business rule violation.
+    //   Do NOT rethrow — retrying will always fail again.
+    // Transient = network timeout, Firestore contention.
+    //   Rethrow so Firebase retries. Idempotency guard is safe.
+    const isPermanent =
+      errMsg.includes('Insufficient stock') ||
+      errMsg.includes('Product not found') ||
+      errMsg.includes('credit limit') ||
+      errMsg.includes('Customer not found');
+
     await saleRef.update({
       status:        'failed',
-      failureReason: String(err),
+      failureReason: errMsg,
       updatedAt:     FieldValue.serverTimestamp(),
     });
-    console.error(`[saleEngine] failed: ${companyId}/${saleId}`, err);
-    throw err; // re-throw so Firebase retries (but idempotency guard protects)
+
+    console.error(
+      `[saleEngine] ${isPermanent ? 'permanent' : 'transient'} ` +
+      `failure: ${companyId}/${saleId}`, err
+    );
+
+    if (!isPermanent) throw err; // Transient: let Firebase retry safely
+    // Permanent: do not rethrow — no point retrying
   }
 }
 
@@ -343,8 +399,11 @@ async function processSaleVoid(
     });
 
     // ── 5. Mark void as processed ─────────────────────────────
-    // voidProcessed = idempotency guard for retries
+    // P1-1: CF owns status change to 'voided' — not the client.
+    // Client only sets isVoid=true. CF sets status here.
+    // voidProcessed = idempotency guard for retries.
     txn.update(saleRef, {
+      status:        'voided',
       voidProcessed: true,
       updatedAt:     FieldValue.serverTimestamp(),
     });
