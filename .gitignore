@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+functions/node_modules/
+
+# Build output
+dist/
+functions/lib/
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# Environment — NEVER commit these, they contain Firebase keys
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+
+# Keep the example file — it has no real keys
+!.env.example
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

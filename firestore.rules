@@ -1,0 +1,358 @@
+rules_version = '2';
+
+// TradeFlow — Firestore Security Rules
+// Deploy: firebase deploy --only firestore:rules
+// P1 hardened — June 2026
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ──────────────────────────────────────
+    function isAuth()  { return request.auth != null; }
+    function uid()     { return request.auth.uid; }
+
+    // P1 fix: replace REPLACE_WITH_ADMIN_UID with your real Firebase Auth UID
+    // Get it from Firebase Console → Authentication → Users → your account → copy UID
+    // Then run: npm run deploy:rules
+    function isAdmin() { return isAuth() && uid() == 'REPLACE_WITH_ADMIN_UID'; }
+
+    function isMember(cid) {
+      return isAuth() &&
+        exists(/databases/$(database)/documents/companies/$(cid)/users/$(uid()));
+    }
+    function getUser(cid) {
+      return get(/databases/$(database)/documents/companies/$(cid)/users/$(uid())).data;
+    }
+    function isActiveUser(cid) {
+      return isMember(cid) && getUser(cid).status == 'active';
+    }
+    function hasRole(cid, role) {
+      return isActiveUser(cid) && getUser(cid).role == role;
+    }
+    function isOwner(cid)     { return hasRole(cid, 'owner'); }
+    function isAdminRole(cid) { return hasRole(cid, 'admin') || isOwner(cid); }
+    function canWrite(cid)    { return isOwner(cid) || isAdminRole(cid) || hasRole(cid, 'sales'); }
+    function canRead(cid)     { return isActiveUser(cid); }
+
+    // Validate base fields on create
+    function hasBase(cid) {
+      return request.resource.data.companyId == cid
+        && request.resource.data.createdBy == uid()
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+    }
+    function validAmt(a)  { return a is number && a >= 0 && a < 10000000; }
+    function validName(n) { return n is string && n.size() > 0 && n.size() <= 300; }
+
+    // P1 fix: immutable fields must not change on update
+    function immutableFields(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // ── userCompany index ─────────────────────────────────────
+    match /userCompany/{targetUid} {
+      allow read: if isAuth() && uid() == targetUid;
+
+      allow create: if isAuth()
+        && request.resource.data.uid       == targetUid
+        && request.resource.data.companyId is string
+        && request.resource.data.companyId.size() > 0
+        && request.resource.data.keys().hasOnly(['uid','companyId','createdAt'])
+        && (
+          (uid() == targetUid && uid() == request.resource.data.companyId)
+          || (
+            uid() != targetUid
+            && isOwner(request.resource.data.companyId)
+            && exists(/databases/$(database)/documents/companies/$(request.resource.data.companyId)/users/$(targetUid))
+          )
+        );
+
+      allow update, delete: if false;
+    }
+
+    // ── Companies ─────────────────────────────────────────────
+    match /companies/{cid} {
+      allow read:   if canRead(cid) || isAdmin();
+      allow create: if isAuth()
+                    && uid() == request.resource.data.ownerUid
+                    && validName(request.resource.data.name)
+                    && request.resource.data.currency is string
+                    && request.resource.data.plan   in ['basic','pro']
+                    && request.resource.data.status == 'trial';
+      allow update: if (isOwner(cid)
+                        // P1: ownerUid, plan, status are immutable from client
+                        && immutableFields(['ownerUid','plan','status','createdAt']))
+                    || isAdmin();
+      allow delete: if false;
+
+      // ── Users ─────────────────────────────────────────────
+      match /users/{userId} {
+        allow read:   if canRead(cid);
+
+        // Staff added by owner/admin
+        allow create: if isAdminRole(cid)
+                      && request.resource.data.companyId == cid
+                      && request.resource.data.uid       == userId
+                      && request.resource.data.role in ['admin','sales','accountant','viewer']
+                      && request.resource.data.status    == 'active';
+
+        // Owner self-onboarding
+        allow create: if isAuth()
+                      && uid() == userId
+                      && uid() == cid
+                      && request.resource.data.role      == 'owner'
+                      && request.resource.data.companyId == cid;
+
+        allow update: if (isOwner(cid)
+                          // P1: uid, companyId, createdAt, createdBy are immutable
+                          && immutableFields(['uid','companyId','createdAt','createdBy'])
+                          && request.resource.data.companyId == resource.data.companyId
+                          && request.resource.data.uid       == resource.data.uid)
+                      || (isAdminRole(cid)
+                          && resource.data.role   != 'owner'
+                          && request.resource.data.role != 'owner'
+                          && immutableFields(['uid','companyId','createdAt','createdBy'])
+                          && request.resource.data.companyId == resource.data.companyId
+                          && request.resource.data.uid       == resource.data.uid);
+        allow delete: if false;
+      }
+
+      // ── Customers ─────────────────────────────────────────
+      match /customers/{id} {
+        allow read, list: if canRead(cid);
+        allow create:     if canWrite(cid) && hasBase(cid)
+                          && validName(request.resource.data.name)
+                          && request.resource.data.status == 'active';
+        allow update:     if canWrite(cid)
+                          // P1: these fields are Cloud Function territory — never client-writable
+                          && immutableFields([
+                               'companyId','createdBy','createdAt',
+                               'openingBalance','currentBalance'
+                             ]);
+        allow delete:     if false;
+      }
+
+      // ── Suppliers ─────────────────────────────────────────
+      match /suppliers/{id} {
+        allow read, list: if canRead(cid);
+        allow create:     if isAdminRole(cid) && hasBase(cid)
+                          && validName(request.resource.data.name)
+                          && request.resource.data.status == 'active';
+        allow update:     if isAdminRole(cid)
+                          && immutableFields([
+                               'companyId','createdBy','createdAt',
+                               'openingBalance','currentBalance'
+                             ]);
+        allow delete:     if false;
+      }
+
+      // ── Products ──────────────────────────────────────────
+      match /products/{id} {
+        allow read, list: if canRead(cid);
+        allow create:     if isAdminRole(cid) && hasBase(cid)
+                          && validName(request.resource.data.name)
+                          && request.resource.data.status == 'active';
+        allow update:     if isAdminRole(cid)
+                          // P1: currentStock is Cloud Function territory only
+                          && immutableFields([
+                               'companyId','createdBy','createdAt',
+                               'currentStock','openingStock'
+                             ]);
+        allow delete:     if false;
+      }
+
+      // ── Sales ─────────────────────────────────────────────
+      match /sales/{id} {
+        allow read, list: if canRead(cid);
+        allow create:     if canWrite(cid) && hasBase(cid)
+                          && validAmt(request.resource.data.total)
+                          && request.resource.data.paymentType in ['cash','credit']
+                          && request.resource.data.isVoid == false
+                          && request.resource.data.status == 'active'
+                          && exists(/databases/$(database)/documents/companies/$(cid)/customers/$(request.resource.data.customerId));
+        // Only void allowed — all other fields locked
+        allow update:     if isAdminRole(cid)
+                          && request.resource.data.isVoid     == true
+                          && resource.data.isVoid              == false
+                          && immutableFields([
+                               'total','customerId','companyId',
+                               'createdBy','createdAt','paymentType','items'
+                             ]);
+        allow delete:     if false;
+      }
+
+      match /saleItems/{id} {
+        allow read, list:     if canRead(cid);
+        allow create:         if canWrite(cid) && hasBase(cid)
+                              && validAmt(request.resource.data.total)
+                              && exists(/databases/$(database)/documents/companies/$(cid)/sales/$(request.resource.data.saleId));
+        allow update, delete: if false;
+      }
+
+      // ── Purchases ─────────────────────────────────────────
+      match /purchases/{id} {
+        allow read, list: if canRead(cid);
+        allow create:     if isAdminRole(cid) && hasBase(cid)
+                          && validAmt(request.resource.data.total)
+                          && request.resource.data.paymentType in ['cash','credit']
+                          && request.resource.data.isVoid == false
+                          && request.resource.data.status == 'active'
+                          && exists(/databases/$(database)/documents/companies/$(cid)/suppliers/$(request.resource.data.supplierId));
+        allow update:     if isAdminRole(cid)
+                          && request.resource.data.isVoid == true
+                          && resource.data.isVoid          == false
+                          && immutableFields([
+                               'total','supplierId','companyId',
+                               'createdBy','createdAt','paymentType'
+                             ]);
+        allow delete:     if false;
+      }
+
+      match /purchaseItems/{id} {
+        allow read, list:     if canRead(cid);
+        allow create:         if isAdminRole(cid) && hasBase(cid)
+                              && validAmt(request.resource.data.total);
+        allow update, delete: if false;
+      }
+
+      // ── Receipts ──────────────────────────────────────────
+      match /receipts/{id} {
+        allow read, list: if canRead(cid);
+        allow create:     if canWrite(cid) && hasBase(cid)
+                          && validAmt(request.resource.data.amount)
+                          && request.resource.data.isVoid == false
+                          && exists(/databases/$(database)/documents/companies/$(cid)/customers/$(request.resource.data.customerId));
+        allow update:     if isAdminRole(cid)
+                          && request.resource.data.isVoid == true
+                          && resource.data.isVoid          == false
+                          && immutableFields([
+                               'amount','customerId','companyId',
+                               'createdBy','createdAt','paymentType'
+                             ]);
+        allow delete:     if false;
+      }
+
+      // ── Payments ──────────────────────────────────────────
+      match /payments/{id} {
+        allow read, list: if canRead(cid);
+        allow create:     if isAdminRole(cid) && hasBase(cid)
+                          && validAmt(request.resource.data.amount)
+                          && request.resource.data.isVoid == false
+                          && exists(/databases/$(database)/documents/companies/$(cid)/suppliers/$(request.resource.data.supplierId));
+        allow update:     if isAdminRole(cid)
+                          && request.resource.data.isVoid == true
+                          && resource.data.isVoid          == false
+                          && immutableFields([
+                               'amount','supplierId','companyId',
+                               'createdBy','createdAt','paymentType'
+                             ]);
+        allow delete:     if false;
+      }
+
+      // ── Stock Movements (CF writes only) ──────────────────
+      match /stockMovements/{id} {
+        allow read, list: if canRead(cid);
+        allow write:      if false;
+      }
+
+      // ── Customer credit notes ─────────────────────────────
+      // creditNotes = discount or return we give to a customer (reduces receivable)
+      match /creditNotes/{id} {
+        allow read, list: if canRead(cid);
+        allow create:     if isAdminRole(cid) && hasBase(cid)
+                          && validAmt(request.resource.data.total)
+                          && request.resource.data.isVoid == false;
+        allow update:     if isAdminRole(cid)
+                          && request.resource.data.isVoid == true
+                          && resource.data.isVoid          == false
+                          && immutableFields(['total','companyId','createdBy','createdAt','customerId']);
+        allow delete:     if false;
+      }
+
+      // ── Supplier purchase returns ──────────────────────────
+      // purchaseReturns = goods we return to supplier (reduces payable)
+      match /purchaseReturns/{id} {
+        allow read, list: if canRead(cid);
+        allow create:     if isAdminRole(cid) && hasBase(cid)
+                          && validAmt(request.resource.data.total)
+                          && request.resource.data.isVoid == false
+                          && exists(/databases/$(database)/documents/companies/$(cid)/suppliers/$(request.resource.data.supplierId));
+        allow update:     if isAdminRole(cid)
+                          && request.resource.data.isVoid == true
+                          && resource.data.isVoid          == false
+                          && immutableFields(['total','companyId','createdBy','createdAt','supplierId']);
+        allow delete:     if false;
+      }
+
+      // ── Supplier debits ────────────────────────────────────
+      // supplierDebits = extra charges billed by supplier (increases payable)
+      match /supplierDebits/{id} {
+        allow read, list: if canRead(cid);
+        allow create:     if isAdminRole(cid) && hasBase(cid)
+                          && validAmt(request.resource.data.total)
+                          && request.resource.data.isVoid == false
+                          && exists(/databases/$(database)/documents/companies/$(cid)/suppliers/$(request.resource.data.supplierId));
+        allow update:     if isAdminRole(cid)
+                          && request.resource.data.isVoid == true
+                          && resource.data.isVoid          == false
+                          && immutableFields(['total','companyId','createdBy','createdAt','supplierId']);
+        allow delete:     if false;
+      }
+
+      // ── Shipments (Pro) ───────────────────────────────────
+      match /shipments/{id} {
+        allow read, list: if canRead(cid);
+        allow create:     if isAdminRole(cid) && hasBase(cid)
+                          && request.resource.data.status in
+                             ['ordered','dispatched','in_transit','customs','received'];
+        allow update:     if isAdminRole(cid)
+                          && immutableFields(['companyId','createdBy','createdAt']);
+        allow delete:     if false;
+      }
+
+      // ── Uploaded Invoices (Pro) ───────────────────────────
+      match /uploadedInvoices/{id} {
+        allow read, list: if canRead(cid);
+        allow create:     if isAdminRole(cid) && hasBase(cid);
+        allow update:     if isAdminRole(cid)
+                          && immutableFields(['companyId','createdBy','createdAt']);
+        allow delete:     if false;
+      }
+
+      // ── Settings ──────────────────────────────────────────
+      match /settings/{docId} {
+        allow read:  if canRead(cid);
+        allow write: if isOwner(cid);
+      }
+    }
+
+    // ── Subscriptions (CF writes only) ────────────────────────
+    match /subscriptions/{cid} {
+      allow read:  if isAuth() &&
+        exists(/databases/$(database)/documents/companies/$(cid)/users/$(uid()));
+      allow write: if false;
+    }
+
+    // ── Audit Log (CF writes only) ────────────────────────────
+    match /auditLog/{id} { allow read, write: if false; }
+
+    // ── Phone Index (CF writes only) ──────────────────────────
+    match /phoneIndex/{phone} { allow read: if isAuth(); allow write: if false; }
+
+    // ── Admin Config ──────────────────────────────────────────
+    match /adminConfig/{id} { allow read: if isAdmin(); allow write: if false; }
+
+    // ── Agents ────────────────────────────────────────────────
+    // P1 fix: agent creation is admin-only, not any authenticated user
+    match /agents/{code} {
+      allow get:    if isAuth();
+      allow list:   if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAuth() && uid() == resource.data.ownerUid;
+      allow delete: if false;
+    }
+
+    // ── Default deny ──────────────────────────────────────────
+    match /{document=**} { allow read, write: if false; }
+  }
+}

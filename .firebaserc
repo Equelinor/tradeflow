@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "default":    "tradeflow-dev",
+    "development": "tradeflow-dev",
+    "production":  "tradeflow-prod"
+  }
+}

@@ -1,0 +1,66 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand-color: #1D9E75;
+  --brand-color-light: #E1F5EE;
+  --brand-color-dark: #0F6E56;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: #f8f9fa;
+  color: #1a1a1a;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Prevent iOS input zoom */
+input, select, textarea {
+  font-size: 16px !important;
+}
+
+/* Safe area for iPhone */
+.safe-bottom {
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+/* Brand color utilities */
+.bg-brand       { background-color: var(--brand-color); }
+.bg-brand-light { background-color: var(--brand-color-light); }
+.text-brand     { color: var(--brand-color); }
+.border-brand   { border-color: var(--brand-color); }
+.ring-brand     { --tw-ring-color: var(--brand-color); }
+
+/* Scrollbar */
+::-webkit-scrollbar       { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
+
+/* Skeleton animation */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+/* Bottom nav safe area */
+.bottom-nav {
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+}
