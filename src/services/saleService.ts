@@ -115,16 +115,15 @@ export async function voidSale(
 ): Promise<void> {
   if (!reason.trim()) throw new Error('Void reason is required');
 
-  // Client only sets void intent fields.
-  // CF detects isVoid=true and owns:
-  //   status: 'voided', voidProcessed: true, stock reversal, balance reversal
   await updateDoc(doc(db, SUB(companyId).sales, saleId), {
     isVoid:    true,
     voidReason:reason.trim(),
     voidedAt:  serverTimestamp(),
     voidedBy:  uid,
+    status:    'voided',
     updatedAt: serverTimestamp(),
-    // status: NOT SET HERE — CF owns this
+    // stockProcessed and balanceProcessed will be reset by CF
+    // after it reverses the impacts
   });
 }
 
