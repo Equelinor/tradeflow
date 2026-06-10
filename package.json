@@ -10,13 +10,14 @@
     "build:prod": "tsc && vite build --mode production",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "deploy:dev": "npm run build:dev && firebase use tradeflow-dev && firebase deploy",
-    "deploy:prod": "npm run build:prod && firebase use tradeflow-prod && firebase deploy",
-    "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage",
-    "deploy:functions": "firebase deploy --only functions",
-    "build:functions": "cd functions && npm run build",
+    "deploy:dev": "npm run build:dev && npm run build:functions && firebase use tradeflow-dev && firebase deploy --only hosting,firestore:rules,storage,functions",
+    "deploy:prod": "npm run build:prod && npm run build:functions && firebase use tradeflow-prod && firebase deploy --only hosting,firestore:rules,storage,functions",
+    "deploy:rules": "firebase deploy --only firestore:rules,storage",
+    "deploy:functions": "npm run build:functions && firebase deploy --only functions",
+    "build:functions": "cd functions && npm install && npm run build",
     "deploy:all:dev": "npm run build:dev && npm run build:functions && firebase use tradeflow-dev && firebase deploy",
-    "deploy:all:prod": "npm run build:prod && npm run build:functions && firebase use tradeflow-prod && firebase deploy"
+    "deploy:all:prod": "npm run build:prod && npm run build:functions && firebase use tradeflow-prod && firebase deploy",
+    "predeploy:check": "npm run build:functions && echo Functions build OK"
   },
   "dependencies": {
     "firebase": "^10.12.0",

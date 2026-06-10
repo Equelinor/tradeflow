@@ -80,18 +80,32 @@ async function recalculateSupplierBalance(
     return;
   }
 
-  const openingBalance     = supplierSnap.data()?.openingBalance ?? 0;
-  const totalPurchases     = purchasesSnap.docs.reduce(       (s, d) => s + (d.data().total  ?? 0), 0);
-  const totalPayments      = paymentsSnap.docs.reduce(        (s, d) => s + (d.data().amount ?? 0), 0);
-  const totalReturns       = purchaseReturnsSnap.docs.reduce( (s, d) => s + (d.data().total  ?? 0), 0);
-  const totalSupplierDebits= supplierDebitsSnap.docs.reduce(  (s, d) => s + (d.data().total  ?? 0), 0);
+  const openingBalance = supplierSnap.data()?.openingBalance ?? 0;
+
+  // P1-2 fix: purchases use amountDue — NOT grandTotal or total.
+  // Cash purchases: amountDue = 0 (paid immediately, no payable impact).
+  // Credit purchases: amountDue = grandTotal (full amount to payable).
+  // Partial purchases: amountDue = unpaid portion only.
+  // Using grandTotal would incorrectly inflate payable for cash purchases.
+  const totalPurchases      = purchasesSnap.docs.reduce(
+    (s, d) => s + (d.data().amountDue ?? 0), 0
+  );
+  const totalPayments       = paymentsSnap.docs.reduce(
+    (s, d) => s + (d.data().amount ?? 0), 0
+  );
+  const totalReturns        = purchaseReturnsSnap.docs.reduce(
+    (s, d) => s + (d.data().amountDue ?? d.data().total ?? 0), 0
+  );
+  const totalSupplierDebits = supplierDebitsSnap.docs.reduce(
+    (s, d) => s + (d.data().total ?? 0), 0
+  );
 
   const newBalance =
     openingBalance
-    + totalPurchases      // (+) we owe more
-    - totalPayments       // (-) we paid
-    - totalReturns        // (-) we returned goods
-    + totalSupplierDebits;// (+) supplier charged us extra
+    + totalPurchases       // (+) unpaid portion of purchases only
+    - totalPayments        // (-) payments made to supplier
+    - totalReturns         // (-) goods returned to supplier
+    + totalSupplierDebits; // (+) extra charges billed by supplier
 
   // Round to 3 decimal places (BHD/Gulf standard)
   const rounded = Math.round(newBalance * 1000) / 1000;
@@ -103,8 +117,8 @@ async function recalculateSupplierBalance(
 
   console.log(
     `[supplierBalance] ${supplierId}: ` +
-    `${openingBalance} ` +
-    `+ purchases(${totalPurchases}) ` +
+    `opening=${openingBalance} ` +
+    `+ purchases.amountDue(${totalPurchases}) ` +
     `- payments(${totalPayments}) ` +
     `- returns(${totalReturns}) ` +
     `+ supplierDebits(${totalSupplierDebits}) ` +

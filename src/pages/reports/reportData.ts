@@ -11,6 +11,13 @@ import { sampleStockMovements } from '@/pages/products/productData';
 // IMPORTANT: Reports are READ-ONLY aggregations.
 // No report function writes to Firestore.
 // All calculations happen client-side on read data.
+//
+// DEMO DATA: Currently aggregating from sampleX arrays.
+// TODO: Replace each sampleX with a Firestore hook when Firebase
+// is connected. Pattern: replace sampleSales with useSales(companyId),
+// sampleCustomers with useCustomers(companyId), etc.
+// This is a pre-deploy blocker — do not deploy to production
+// with sample data hooks.
 // ─────────────────────────────────────────────────────────────
 
 // ── Aging buckets ─────────────────────────────────────────────
