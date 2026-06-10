@@ -314,16 +314,37 @@ service cloud.firestore {
       // ── Payments ──────────────────────────────────────────
       match /payments/{id} {
         allow read, list: if canRead(cid);
+
+        // All constraints required by paymentService.ts and paymentEngine.ts
         allow create:     if isAdminRole(cid) && hasBase(cid)
                           && validAmt(request.resource.data.amount)
-                          && request.resource.data.isVoid == false
-                          && exists(/databases/$(database)/documents/companies/$(cid)/suppliers/$(request.resource.data.supplierId));
+                          && request.resource.data.isVoid            == false
+                          && request.resource.data.status            == 'pending'
+                          && request.resource.data.balanceProcessed  == false
+                          && request.resource.data.voidProcessed     == false
+                          && request.resource.data.paymentNumber      == null
+                          && request.resource.data.source            == 'manual'
+                          && exists(/databases/$(database)/documents/companies/$(cid)/suppliers/$(request.resource.data.supplierId))
+                          && request.resource.data.keys().hasOnly([
+                               'companyId','supplierId','paymentNumber','amount',
+                               'paymentMethod','referenceNo','date','notes',
+                               'overpaymentOverride',
+                               'isVoid','voidReason','voidedAt','voidedBy',
+                               'voidProcessed','balanceProcessed',
+                               'source','status','failureReason',
+                               'createdAt','updatedAt','createdBy'
+                             ]);
+
+        // Client void only — CF owns status, paymentNumber, balanceProcessed
         allow update:     if isAdminRole(cid)
-                          && request.resource.data.isVoid == true
-                          && resource.data.isVoid          == false
+                          && request.resource.data.isVoid  == true
+                          && resource.data.isVoid           == false
+                          && request.resource.data.voidReason is string
+                          && request.resource.data.voidReason.size() > 0
                           && immutableFields([
                                'amount','supplierId','companyId',
-                               'createdBy','createdAt','paymentType'
+                               'createdBy','createdAt','paymentMethod',
+                               'paymentNumber','balanceProcessed','status'
                              ]);
         allow delete:     if false;
       }

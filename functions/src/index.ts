@@ -7,5 +7,6 @@
 export { onSaleWrite }                                          from './saleEngine';
 export { onPurchaseWriteEngine }                                from './purchaseEngine';
 export { onReceiptWrite }                                       from './receiptEngine';
+export { onPaymentWriteEngine }                                 from './paymentEngine';
 export { onPurchaseWrite, onPaymentWrite,
          onPurchaseReturnWrite, onSupplierDebitWrite }          from './supplierBalance';
