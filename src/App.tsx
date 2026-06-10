@@ -28,6 +28,7 @@ const NewSalePage     = lazy(() => import('@/pages/sales/NewSalePage'));
 const SaleDetail      = lazy(() => import('@/pages/sales/SaleDetail'));
 const PurchasesPage   = lazy(() => import('@/pages/purchases/PurchasesPage'));
 const NewPurchasePage = lazy(() => import('@/pages/purchases/NewPurchasePage'));
+const PurchaseDetail  = lazy(() => import('@/pages/purchases/PurchaseDetail'));
 const ReceiptsPage    = lazy(() => import('@/pages/receipts/ReceiptsPage'));
 const PaymentsPage    = lazy(() => import('@/pages/payments/PaymentsPage'));
 const ReportsPage     = lazy(() => import('@/pages/reports/ReportsPage'));
@@ -156,6 +157,11 @@ function ProtectedApp() {
             <Route path="/purchases/new" element={
               <ProtectedRoute roles={['owner','admin']}>
                 <NewPurchasePage />
+              </ProtectedRoute>
+            } />
+            <Route path="/purchases/:id" element={
+              <ProtectedRoute roles={['owner','admin']}>
+                <PurchaseDetail />
               </ProtectedRoute>
             } />
 
