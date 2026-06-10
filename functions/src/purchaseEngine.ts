@@ -1,20 +1,7 @@
 // ─────────────────────────────────────────────────────────────
-// Cloud Function: Purchase Engine
-// Region: europe-west1
-//
-// TRANSACTION RULE: All reads before all writes.
-//
-// P1-2 FIX: Supplier balance is NOT updated here directly.
-// supplierBalance.ts owns supplier currentBalance via full
-// recalculation from ledger. This engine only handles:
-//   - stock increase
-//   - purchase number generation
-//   - audit log
-//   - status confirmation
-//
-// Why: purchaseEngine AND supplierBalance.ts both trigger on
-// purchase writes. If both touch currentBalance, you get a race.
-// Single source of truth = supplierBalance.ts recalculator.
+// Cloud Function: Purchase Engine — europe-west1
+// Counter split into read (Phase 1) + write (Phase 2).
+// Supplier balance NOT touched here — owned by supplierBalance.ts
 // ─────────────────────────────────────────────────────────────
 
 import * as functions from 'firebase-functions/v2';
@@ -23,16 +10,28 @@ import { getFirestore, FieldValue, Transaction } from 'firebase-admin/firestore'
 const db     = getFirestore();
 const REGION = 'europe-west1';
 
-async function generatePurchaseNumber(companyId: string, txn: Transaction): Promise<string> {
-  const ref  = db.doc(`companies/${companyId}/settings/purchaseCounter`);
-  const snap = await txn.get(ref);
+interface CounterState {
+  ref: FirebaseFirestore.DocumentReference;
+  prefix: string; year: number; next: number; padding: number;
+}
+
+async function readCounterNext(
+  companyId: string, counterName: string, defaultPrefix: string, txn: Transaction
+): Promise<CounterState> {
+  const ref  = db.doc(`companies/${companyId}/settings/${counterName}`);
+  const snap = await txn.get(ref); // READ ONLY
   const year = new Date().getFullYear();
-  const prefix  = snap.exists ? (snap.data()?.prefix  ?? 'PUR') : 'PUR';
-  const padding = snap.exists ? (snap.data()?.padding ?? 4)     : 4;
-  const storedYear = snap.exists ? (snap.data()?.year ?? year)  : year;
-  const next = (storedYear === year && snap.exists) ? (snap.data()?.next ?? 1) : 1;
-  txn.set(ref, { prefix, year, next: next + 1, padding }, { merge: true });
-  return `${prefix}-${year}-${String(next).padStart(padding, '0')}`;
+  const prefix     = snap.exists ? (snap.data()?.prefix  ?? defaultPrefix) : defaultPrefix;
+  const padding    = snap.exists ? (snap.data()?.padding ?? 4)             : 4;
+  const storedYear = snap.exists ? (snap.data()?.year    ?? year)          : year;
+  const next       = (storedYear === year && snap.exists) ? (snap.data()?.next ?? 1) : 1;
+  return { ref, prefix, year, next, padding };
+}
+
+function writeCounterNext(state: CounterState, txn: Transaction): string {
+  txn.set(state.ref, { prefix: state.prefix, year: state.year,
+    next: state.next + 1, padding: state.padding }, { merge: true });
+  return `${state.prefix}-${state.year}-${String(state.next).padStart(state.padding, '0')}`;
 }
 
 export const onPurchaseWriteEngine = functions.firestore.onDocumentWritten(
@@ -45,21 +44,16 @@ export const onPurchaseWriteEngine = functions.firestore.onDocumentWritten(
     if (!after) return;
 
     if (after.status === 'pending' && !after.stockProcessed && !after.balanceProcessed) {
-      await processPurchaseCreation(companyId, purchaseId, after);
-      return;
+      await processPurchaseCreation(companyId, purchaseId, after); return;
     }
     if (after.isVoid && !after.voidProcessed && before && !before.isVoid) {
-      await processPurchaseVoid(companyId, purchaseId, after);
-      return;
+      await processPurchaseVoid(companyId, purchaseId, after); return;
     }
   }
 );
 
-// ── Process purchase creation (reads first, then writes) ──────
 async function processPurchaseCreation(
-  companyId:  string,
-  purchaseId: string,
-  purchase:   FirebaseFirestore.DocumentData
+  companyId: string, purchaseId: string, purchase: FirebaseFirestore.DocumentData
 ): Promise<void> {
   const base        = `companies/${companyId}`;
   const purchaseRef = db.doc(`${base}/purchases/${purchaseId}`);
@@ -69,39 +63,37 @@ async function processPurchaseCreation(
 
       // ══ PHASE 1 — ALL READS ══════════════════════════════
 
-      // Idempotency check
+      // Idempotency
       const liveSnap = await txn.get(purchaseRef);
       if (!liveSnap.exists) return;
       const live = liveSnap.data()!;
       if (live.stockProcessed || live.balanceProcessed) {
-        console.log(`[purchaseEngine] already processed: ${purchaseId}`);
-        return;
+        console.log(`[purchaseEngine] already processed: ${purchaseId}`); return;
       }
 
-      // Counter reads
-      const purchaseNumber = await generatePurchaseNumber(companyId, txn);
+      // Counter read (no write yet)
+      const counterState = await readCounterNext(companyId, 'purchaseCounter', 'PUR', txn);
 
-      // Supplier read (for existence check only — balance owned by supplierBalance.ts)
+      // Supplier existence check
       const supplierSnap = await txn.get(db.doc(`${base}/suppliers/${purchase.supplierId}`));
       if (!supplierSnap.exists) throw new Error(`Supplier not found: ${purchase.supplierId}`);
 
       // Product reads
-      const productRefs  = purchase.items.map((item: any) => db.doc(`${base}/products/${item.productId}`));
-      const productSnaps = await Promise.all(productRefs.map((ref: any) => txn.get(ref)));
-
-      // Validate products exist
+      const productRefs  = purchase.items.map((i: any) => db.doc(`${base}/products/${i.productId}`));
+      const productSnaps = await Promise.all(productRefs.map((r: any) => txn.get(r)));
       for (let i = 0; i < purchase.items.length; i++) {
         if (!productSnaps[i].exists) throw new Error(`Product not found: ${purchase.items[i].productId}`);
       }
 
       // ══ PHASE 2 — ALL WRITES ════════════════════════════
 
-      // Stock increases + movements
-      for (let i = 0; i < purchase.items.length; i++) {
-        const item        = purchase.items[i];
-        const currentStock = productSnaps[i].data()!.currentStock ?? 0;
-        const newStock     = currentStock + item.qty; // INCREASE
+      // Write counter
+      const purchaseNumber = writeCounterNext(counterState, txn);
 
+      // Stock increases
+      for (let i = 0; i < purchase.items.length; i++) {
+        const item     = purchase.items[i];
+        const newStock = (productSnaps[i].data()!.currentStock ?? 0) + item.qty;
         txn.update(productRefs[i], { currentStock: newStock, updatedAt: FieldValue.serverTimestamp() });
         txn.set(db.collection(`${base}/stockMovements`).doc(), {
           companyId, productId: item.productId, productName: item.productName,
@@ -111,9 +103,8 @@ async function processPurchaseCreation(
         });
       }
 
-      // NOTE: Supplier balance is NOT updated here.
-      // supplierBalance.ts recalculates from all purchases/payments/returns
-      // and will fire separately on this same write event.
+      // Supplier balance intentionally NOT updated here.
+      // supplierBalance.ts recalculates from ledger on this same write event.
 
       // Audit log
       txn.set(db.collection('auditLog').doc(), {
@@ -127,7 +118,6 @@ async function processPurchaseCreation(
       // Confirm
       txn.update(purchaseRef, {
         purchaseNumber, stockProcessed: true,
-        // balanceProcessed will be set by supplierBalance.ts after it runs
         status: 'confirmed', updatedAt: FieldValue.serverTimestamp(),
       });
     });
@@ -143,11 +133,8 @@ async function processPurchaseCreation(
   }
 }
 
-// ── Process void (reads first, then writes) ───────────────────
 async function processPurchaseVoid(
-  companyId:  string,
-  purchaseId: string,
-  purchase:   FirebaseFirestore.DocumentData
+  companyId: string, purchaseId: string, purchase: FirebaseFirestore.DocumentData
 ): Promise<void> {
   const base        = `companies/${companyId}`;
   const purchaseRef = db.doc(`${base}/purchases/${purchaseId}`);
@@ -158,19 +145,15 @@ async function processPurchaseVoid(
     const liveSnap = await txn.get(purchaseRef);
     if (!liveSnap.exists) return;
     if (liveSnap.data()!.voidProcessed) {
-      console.log(`[purchaseEngine] void already processed: ${purchaseId}`);
-      return;
+      console.log(`[purchaseEngine] void already processed: ${purchaseId}`); return;
     }
-
-    const productRefs  = purchase.items.map((item: any) => db.doc(`${base}/products/${item.productId}`));
-    const productSnaps = await Promise.all(productRefs.map((ref: any) => txn.get(ref)));
+    const productRefs  = purchase.items.map((i: any) => db.doc(`${base}/products/${i.productId}`));
+    const productSnaps = await Promise.all(productRefs.map((r: any) => txn.get(r)));
 
     // ══ PHASE 2 — WRITES ══════════════════════════════════════
-
-    // Reverse stock (decrease back)
     for (let i = 0; i < purchase.items.length; i++) {
-      const item        = purchase.items[i];
-      const curStock    = productSnaps[i].exists ? (productSnaps[i].data()!.currentStock ?? 0) : 0;
+      const item     = purchase.items[i];
+      const curStock = productSnaps[i].exists ? (productSnaps[i].data()!.currentStock ?? 0) : 0;
       txn.update(productRefs[i], { currentStock: curStock - item.qty, updatedAt: FieldValue.serverTimestamp() });
       txn.set(db.collection(`${base}/stockMovements`).doc(), {
         companyId, productId: item.productId, productName: item.productName,
@@ -179,10 +162,8 @@ async function processPurchaseVoid(
       });
     }
 
-    // NOTE: Supplier balance reversal handled by supplierBalance.ts
-    // which recalculates from all non-voided purchases/payments/returns.
+    // Supplier balance reversal handled by supplierBalance.ts recalculator.
 
-    // Audit log
     txn.set(db.collection('auditLog').doc(), {
       companyId, action: 'PURCHASE_VOIDED', entityType: 'purchase', entityId: purchaseId,
       data: { purchaseNumber: purchase.purchaseNumber, supplierId: purchase.supplierId,
@@ -190,16 +171,12 @@ async function processPurchaseVoid(
       performedBy: purchase.voidedBy, createdAt: FieldValue.serverTimestamp(),
     });
 
-    // Mark voided — CF sets status
     txn.update(purchaseRef, { status: 'voided', voidProcessed: true, updatedAt: FieldValue.serverTimestamp() });
   });
 
-  // Owner notification
   try {
-    const ownerQuery = await db.collection(`${base}/users`).where('role','==','owner').limit(1).get();
-    if (!ownerQuery.empty && ownerQuery.docs[0].data().fcmToken) {
-      console.log(`[purchaseEngine] void notification queued for owner`);
-    }
+    const ownerQ = await db.collection(`${base}/users`).where('role','==','owner').limit(1).get();
+    if (!ownerQ.empty && ownerQ.docs[0].data().fcmToken) console.log(`[purchaseEngine] void notification queued`);
   } catch (e) { console.warn('[purchaseEngine] notify failed:', e); }
 
   console.log(`[purchaseEngine] voided: ${companyId}/${purchaseId}`);
