@@ -207,27 +207,59 @@ async function processSaleCreation(
 
         // Check credit limit server-side
         if (creditLimit !== null && newBalance > creditLimit) {
-          // Only allow if UI sent a valid creditOverride with approval
           const override = sale.creditOverride;
-          const hasValidOverride = override &&
+
+          // Step 1: basic shape check
+          const hasOverrideShape = override &&
             override.overridden === true &&
             typeof override.reason === 'string' &&
             override.reason.trim().length > 0 &&
             typeof override.by === 'string' &&
             override.by.trim().length > 0;
 
-          if (!hasValidOverride) {
+          if (!hasOverrideShape) {
             throw new Error(
               `credit limit exceeded: balance would be ${newBalance}, ` +
               `limit is ${creditLimit}. No valid override provided.`
             );
           }
 
-          // Log credit override to audit trail
+          // Step 2: GPT catch — verify override.by is actually owner/admin
+          // A forged UID from a sales user must be rejected here.
+          // This read happens inside the transaction so it's consistent.
+          const approverRef  = db.doc(
+            `${base}/users/${override.by}`
+          );
+          const approverSnap = await txn.get(approverRef);
+
+          if (!approverSnap.exists) {
+            throw new Error(
+              `credit limit override rejected: approver ${override.by} ` +
+              `not found in company users.`
+            );
+          }
+
+          const approverData = approverSnap.data()!;
+          const approverRole = approverData.role as string;
+          const approverStatus = approverData.status as string;
+
+          const isAuthorised =
+            (approverRole === 'owner' || approverRole === 'admin') &&
+            approverStatus === 'active';
+
+          if (!isAuthorised) {
+            throw new Error(
+              `credit limit override rejected: ${override.by} has role ` +
+              `'${approverRole}' (${approverStatus}). ` +
+              `Only active owner or admin can approve credit overrides.`
+            );
+          }
+
+          // Override is valid — log to console and audit trail
           console.log(
-            `[saleEngine] credit limit override approved: ` +
-            `${sale.customerId} — ${newBalance} > ${creditLimit} ` +
-            `— approved by ${override.by}: ${override.reason}`
+            `[saleEngine] credit override verified: ` +
+            `approved by ${approverRole} ${override.by} — ` +
+            `${newBalance} > ${creditLimit} — reason: ${override.reason}`
           );
         }
 
