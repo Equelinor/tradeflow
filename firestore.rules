@@ -231,18 +231,45 @@ service cloud.firestore {
       // ── Purchases ─────────────────────────────────────────
       match /purchases/{id} {
         allow read, list: if canRead(cid);
+
+        // P1-3 fix: match purchaseService.ts exactly
+        // - status must be 'pending' (CF sets confirmed)
+        // - paymentType includes 'partial'
+        // - grandTotal not total
+        // - processed flags must be false on create
         allow create:     if isAdminRole(cid) && hasBase(cid)
-                          && validAmt(request.resource.data.total)
-                          && request.resource.data.paymentType in ['cash','credit']
-                          && request.resource.data.isVoid == false
-                          && request.resource.data.status == 'active'
-                          && exists(/databases/$(database)/documents/companies/$(cid)/suppliers/$(request.resource.data.supplierId));
+                          && validAmt(request.resource.data.grandTotal)
+                          && request.resource.data.paymentType in ['cash','credit','partial']
+                          && request.resource.data.isVoid            == false
+                          && request.resource.data.status            == 'pending'
+                          && request.resource.data.stockProcessed    == false
+                          && request.resource.data.balanceProcessed  == false
+                          && request.resource.data.voidProcessed     == false
+                          && request.resource.data.purchaseNumber     == null
+                          && exists(/databases/$(database)/documents/companies/$(cid)/suppliers/$(request.resource.data.supplierId))
+                          && request.resource.data.keys().hasOnly([
+                               'companyId','supplierId','supplierInvoiceNo','date','items',
+                               'subtotal','discountTotal','grandTotal',
+                               'paymentType','amountPaid','amountDue',
+                               'paymentMethod','referenceNo','notes',
+                               'isVoid','voidReason','voidedAt','voidedBy',
+                               'purchaseNumber','stockProcessed','balanceProcessed','voidProcessed',
+                               'status','failureReason',
+                               'createdAt','updatedAt','createdBy'
+                             ]);
+
+        // Client can only void. CF owns status, purchaseNumber, stockProcessed.
         allow update:     if isAdminRole(cid)
-                          && request.resource.data.isVoid == true
-                          && resource.data.isVoid          == false
+                          && request.resource.data.isVoid     == true
+                          && resource.data.isVoid              == false
+                          && request.resource.data.voidReason is string
+                          && request.resource.data.voidReason.size() > 0
                           && immutableFields([
-                               'total','supplierId','companyId',
-                               'createdBy','createdAt','paymentType'
+                               'grandTotal','subtotal','discountTotal',
+                               'amountDue','amountPaid',
+                               'supplierId','companyId','createdBy','createdAt',
+                               'paymentType','items','purchaseNumber',
+                               'stockProcessed','balanceProcessed','status'
                              ]);
         allow delete:     if false;
       }
@@ -257,16 +284,29 @@ service cloud.firestore {
       // ── Receipts ──────────────────────────────────────────
       match /receipts/{id} {
         allow read, list: if canRead(cid);
+
+        // Must create with status: 'pending', balanceProcessed: false
+        // CF sets status: confirmed, receiptNumber, balanceProcessed: true
         allow create:     if canWrite(cid) && hasBase(cid)
                           && validAmt(request.resource.data.amount)
-                          && request.resource.data.isVoid == false
+                          && request.resource.data.isVoid            == false
+                          && request.resource.data.status            == 'pending'
+                          && request.resource.data.balanceProcessed  == false
+                          && request.resource.data.voidProcessed     == false
+                          && request.resource.data.receiptNumber      == null
+                          && request.resource.data.source            == 'manual'
                           && exists(/databases/$(database)/documents/companies/$(cid)/customers/$(request.resource.data.customerId));
+
+        // Client void only — CF owns status
         allow update:     if isAdminRole(cid)
-                          && request.resource.data.isVoid == true
-                          && resource.data.isVoid          == false
+                          && request.resource.data.isVoid  == true
+                          && resource.data.isVoid           == false
+                          && request.resource.data.voidReason is string
+                          && request.resource.data.voidReason.size() > 0
                           && immutableFields([
                                'amount','customerId','companyId',
-                               'createdBy','createdAt','paymentType'
+                               'createdBy','createdAt','paymentMethod',
+                               'receiptNumber','balanceProcessed','status'
                              ]);
         allow delete:     if false;
       }
