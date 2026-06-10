@@ -25,6 +25,9 @@ export interface Sale {
   customerId:      string;
   customerName:    string;
   date:            Timestamp;
+  invoiceDate:     Timestamp;        // always = sale date for MVP
+  dueDate:         Timestamp | null; // nullable — for future credit terms
+  creditDays:      number | null;    // nullable — e.g. 30, 60, 90
   items:           SaleLineItem[];
   subtotal:        number;      // sum of (qty * unitPrice)
   discountTotal:   number;      // sum of all line discounts

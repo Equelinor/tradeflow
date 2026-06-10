@@ -24,6 +24,9 @@ export interface Purchase {
   supplierName:      string;
   supplierInvoiceNo: string | null; // optional supplier's own invoice number
   date:              Timestamp;
+  invoiceDate:       Timestamp;        // always = purchase date for MVP
+  dueDate:           Timestamp | null; // nullable — for future credit terms
+  creditDays:        number | null;    // nullable — e.g. 30, 60, 90
   items:             PurchaseLineItem[];
   subtotal:          number;
   discountTotal:     number;
