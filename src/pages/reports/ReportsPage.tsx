@@ -188,11 +188,20 @@ export default function ReportsPage() {
                   </div>
                   <div className="flex md:col-span-1 items-center justify-between md:justify-end gap-2">
                     <p className="text-sm font-semibold text-red-700 md:hidden">{formatCurrency(row.outstanding, currency)}</p>
-                    <a href={buildWhatsAppUrl('', `Dear ${row.name},\n\nThis is a reminder from ${companyName} regarding your outstanding balance of ${formatCurrency(row.outstanding, currency)}.\n\nKindly arrange payment at your earliest convenience.\n\nThank you,\n${companyName}`)}
-                      target="_blank" rel="noopener noreferrer"
-                      className="w-7 h-7 rounded-lg bg-green-50 flex items-center justify-center text-green-700 hover:bg-green-100 flex-shrink-0"
-                      title="Send reminder">
+                    {/* WhatsApp reminder button — opens WhatsApp with pre-written collection message */}
+                    <a
+                      href={buildWhatsAppUrl(
+                        row.id, // phone resolved from customer record in live mode
+                        `Dear ${row.name},\n\nThis is a reminder from ${companyName} that your outstanding balance is ${formatCurrency(row.outstanding, currency)}.\n\nKindly arrange payment at your earliest convenience.\n\nThank you,\n${companyName}\n${phone}`
+                      )}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 px-2 py-1 rounded-lg bg-green-50 text-green-700 hover:bg-green-100 text-xs font-medium transition-colors flex-shrink-0"
+                      title={`Send WhatsApp reminder to ${row.name}`}
+                      aria-label={`Send WhatsApp payment reminder to ${row.name}`}
+                    >
                       <i className="ti ti-brand-whatsapp text-sm" aria-hidden="true" />
+                      <span className="hidden md:inline">Remind</span>
                     </a>
                   </div>
                 </div>

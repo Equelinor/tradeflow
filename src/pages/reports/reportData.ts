@@ -118,7 +118,7 @@ export function buildAgingReceivables(): AgingRow[] {
   const map = new Map<string, AgingRow>();
 
   for (const sale of activeSales) {
-    const bucket = getAgingBucket(sale.date);
+    const bucket = getAgingBucket(sale.invoiceDate ?? sale.date);
     const existing = map.get(sale.customerId) ?? {
       id: sale.customerId, name: sale.customerName,
       current: 0, d31_60: 0, d61_90: 0, d90plus: 0, total: 0,
@@ -139,7 +139,7 @@ export function buildAgingPayables(): AgingRow[] {
   const map = new Map<string, AgingRow>();
 
   for (const purchase of activePurchases) {
-    const bucket = getAgingBucket(purchase.date);
+    const bucket = getAgingBucket(purchase.invoiceDate ?? purchase.date);
     const existing = map.get(purchase.supplierId) ?? {
       id: purchase.supplierId, name: purchase.supplierName,
       current: 0, d31_60: 0, d61_90: 0, d90plus: 0, total: 0,
@@ -176,7 +176,7 @@ export function buildTopDebtors(): TopDebtorRow[] {
         lastSaleDate:    lastSale?.date ?? null,
         lastReceiptDate: lastReceipt?.date ?? null,
         oldestInvoiceDays: oldestUnpaidSale
-          ? getAgeDays(oldestUnpaidSale.date) : 0,
+          ? getAgeDays(oldestUnpaidSale.invoiceDate ?? oldestUnpaidSale.date) : 0,
       };
     })
     .sort((a, b) => b.outstanding - a.outstanding);

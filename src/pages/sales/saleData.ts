@@ -83,6 +83,9 @@ export const sampleSales: Sale[] = [
     invoiceNumber: 'INV-2026-0001',
     customerId: 'c1', customerName: 'Gulf Foods Co.',
     date: Timestamp.fromDate(new Date('2026-05-10')),
+    invoiceDate: Timestamp.fromDate(new Date('2026-05-10')),
+    dueDate: null,
+    creditDays: null,
     items: [
       { productId: 'p1', productName: 'Rice 25kg Bag', productCode: 'PRD-001',
         unit: 'BAG', qty: 5, unitPrice: 22.000, discount: 0, lineTotal: 110.000 },
@@ -104,6 +107,9 @@ export const sampleSales: Sale[] = [
     invoiceNumber: 'INV-2026-0002',
     customerId: 'c2', customerName: 'XYZ Store',
     date: Timestamp.fromDate(new Date('2026-05-18')),
+    invoiceDate: Timestamp.fromDate(new Date('2026-05-18')),
+    dueDate: null,
+    creditDays: null,
     items: [
       { productId: 'p6', productName: 'Mineral Water 1.5L', productCode: 'PRD-006',
         unit: 'CTN', qty: 10, unitPrice: 3.500, discount: 0, lineTotal: 35.000 },
@@ -123,6 +129,9 @@ export const sampleSales: Sale[] = [
     invoiceNumber: 'INV-2026-0003',
     customerId: 'c3', customerName: 'City Mart',
     date: Timestamp.fromDate(new Date('2026-06-01')),
+    invoiceDate: Timestamp.fromDate(new Date('2026-06-01')),
+    dueDate: null,
+    creditDays: null,
     items: [
       { productId: 'p4', productName: 'Canned Tomatoes 400g', productCode: 'PRD-004',
         unit: 'CTN', qty: 20, unitPrice: 6.000, discount: 10.000, lineTotal: 110.000 },

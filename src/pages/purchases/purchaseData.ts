@@ -70,6 +70,9 @@ export const samplePurchases: Purchase[] = [
     supplierId: 's1', supplierName: 'Gulf Imports Co.',
     supplierInvoiceNo: 'GIC-2026-1234',
     date: Timestamp.fromDate(new Date('2026-05-08')),
+    invoiceDate: Timestamp.fromDate(new Date('2026-05-08')),
+    dueDate: null,
+    creditDays: null,
     items: [
       { productId: 'p1', productName: 'Rice 25kg Bag', productCode: 'PRD-001',
         unit: 'BAG', qty: 20, unitCost: 18.500, discount: 0, lineTotal: 370.000 },
@@ -92,6 +95,9 @@ export const samplePurchases: Purchase[] = [
     supplierId: 's2', supplierName: 'Al Jazeera Foods',
     supplierInvoiceNo: null,
     date: Timestamp.fromDate(new Date('2026-05-28')),
+    invoiceDate: Timestamp.fromDate(new Date('2026-05-28')),
+    dueDate: null,
+    creditDays: null,
     items: [
       { productId: 'p6', productName: 'Mineral Water 1.5L', productCode: 'PRD-006',
         unit: 'CTN', qty: 50, unitCost: 2.500, discount: 0, lineTotal: 125.000 },
