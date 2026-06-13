@@ -4,6 +4,11 @@
 // Deploy: npm run deploy:functions
 // ─────────────────────────────────────────────────────────────
 
+// initializeApp MUST be first — before any Firebase service import.
+// Required for both emulator and production environments.
+import { initializeApp } from 'firebase-admin/app';
+initializeApp();
+
 export { onSaleWrite }                                          from './saleEngine';
 export { onPurchaseWriteEngine }                                from './purchaseEngine';
 export { onReceiptWrite }                                       from './receiptEngine';
